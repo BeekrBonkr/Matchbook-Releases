@@ -76,10 +76,7 @@ Matchbook was built for competitive environments where correctness matters:
 
 ## Install
 
-1. Build the plugin (produces a single shaded jar):
-   ```bash
-   ./gradlew clean build shadowJar
-   ```
+1. Download the latest jar from the releases page.
 
 2. Copy the jar into the MBedwars add-ons folder:
    ```
@@ -104,13 +101,13 @@ Example `config.yml`:
 ```yaml
 storage:
   # yaml or mysql
-  type: mysql
+  type: yaml
 
   mysql:
     host: "laredo.bloom.host"
     port: 3306
-    database: "s105826_matchbook"
-    username: "u105826_sQwmWqYv2d"
+    database: "db
+    username: "username"
     password: "REDACTED"
     # Optional: JDBC URL params (no leading '?')
     params: "useUnicode=true&characterEncoding=utf8&useSSL=true&requireSSL=true&verifyServerCertificate=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
