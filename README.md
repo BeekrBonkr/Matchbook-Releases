@@ -1,115 +1,313 @@
-# Matchbook (MBedwars Add-on)
+# Matchbook
 
-Matchbook is an add-on for **MBedwars (Paper/Purpur 1.21+)** that records **per-match Bedwars stats** for competitive play and esports review.  
-It tracks **kills, deaths, and bed breaks** using authoritative MBedwars events/API (no chat parsing).
+A Paper plugin that records persistent match history for [MBedwars](https://www.spigotmc.org/resources/mbedwars.82729/). Browse past matches in-game, export stats to CSV, and view a full event-by-event match timeline.
 
-Matchbook generates a short **match code** (format: `XXXX-XXXX`) so players/referees can easily write it down and submit it for scoring.
+---
+
+## Features
+
+- **Match history** — every completed BedWars match is saved with per-player stats (kills, deaths, final kills, beds destroyed, wins, losses).
+- **Event log** — every join, leave, death, kill, bed break, and team elimination is recorded with timestamps, including the death/kill cause (fall, void, entity attack, etc.) and whether a leaving player was already eliminated and spectating. Viewable in the GUI and exportable to CSV.
+- **Placement tracking** — 1st, 2nd, 3rd place tracked per team and included in exports. Teams tied for 1st get a dedicated tie stat instead of a false 1st-place credit.
+- **Tie detection** — matches that end without a winner are correctly flagged as ties, with the specific tied teams tracked and shown by color.
+- **In-game GUI** — paginated match list, detailed per-player stats, event timeline viewer.
+- **CSV export** — player stats and event log exported as separate CSV files.
+- **Hastebin upload** — optionally upload exported CSVs to any Hastebin-compatible server automatically. Files are always saved locally too.
+- **PlaceholderAPI** — exposes `%matchbook_matchcode%` for scoreboards/holograms.
+- **Dual storage** — flat YAML files (default) or MySQL/MariaDB with one-command migration.
+- **Auto config updates** — on plugin upgrade, new config keys are added automatically while preserving your existing settings.
+- **Proxy/network safe** — on a hub server with no arenas of its own, Matchbook won't create match records for arenas MBedwars merely knows about over the network (via its remote-arena awareness); it only tracks arenas actually running on that server.
+- **Hub/lobby mode** — an explicit `mode.hub` config flag to fully disable match recording on a server, while still reading and exporting matches from the shared storage backend.
 
 ---
 
 ## Requirements
-- **Paper/Purpur 1.21+**
-- **MBedwars 5.5.6+**
-- Optional: **PlaceholderAPI** (placeholders)
+
+| Dependency | Version | Required |
+|---|---|---|
+| [Paper](https://papermc.io/) | 1.21+ | ✅ |
+| [MBedwars](https://www.spigotmc.org/resources/mbedwars.82729/) | 5.x | ✅ |
+| [PlaceholderAPI](https://www.spigotmc.org/resources/placeholderapi.6245/) | 2.11+ | Optional |
 
 ---
 
-## Install
-1. Download the latest jar from Releases.
-2. Put it here:
-   ```
-   plugins/MBedwars/add-ons/Matchbook-<version>.jar
-   ```
-3. Restart the server to generate config.
+## Installation
 
-Config location (typical):
-```
-plugins/MBedwars/add-ons/Matchbook/config.yml
-```
-
----
-
-## What gets saved
-A match is only saved if at least one of these happened:
-- **Kills**
-- **Deaths**
-- **Bed breaks**
-
-This prevents “empty” matches from cluttering storage.
+1. Drop `Matchbook-<version>.jar` into your `plugins/MBedwars/add-ons/` folder.
+2. Restart the server. Matchbook creates its config at:
+   `plugins/MBedwars/add-ons/Matchbook/config.yml`
+3. Edit `config.yml` as needed (see [Configuration](#configuration)).
+4. Reload with `/mb reload` or restart.
 
 ---
 
 ## Commands
-- `/mb matches` — open your match history GUI
-- `/mb all` — open all matches GUI
-- `/mb view <matchcode>` — view a specific match
-- `/mb export <matchcode[,matchcode...]>` — export CSV (single or combined)
-- `/mb migrate yaml2mysql [--dry-run]` — migrate YAML → MySQL (admin)
-- `/mb migrate mysql2yaml [--dry-run]` — migrate MySQL → YAML (admin)
 
-Aliases: `/matchbook`, `/mb`
+All commands use `/matchbook` or the alias `/mb`.
 
----
-
-## Storage
-Matchbook supports **YAML** or **MySQL**.
-
-### YAML
-- Saves match files under an addon data folder (matches + user index).
-- Simple and portable.
-
-### MySQL
-- Stores the match document as YAML text in SQL for consistency with YAML mode.
-- Includes a player→match index for fast history lookups.
+| Command | Permission | Description |
+|---|---|---|
+| `/mb help` | `mb.command.help` | Show available commands. |
+| `/mb matches` | `mb.command.matches` | Open your personal match history GUI. |
+| `/mb all` | `mb.command.all` | Open the global match list (all matches, newest first). |
+| `/mb view <matchcode>` | `mb.command.view` | Open the details GUI for a specific match. |
+| `/mb export <code>[,code...]` | `mb.command.export` | Export one or more matches to CSV files. |
+| `/mb migrate yaml2mysql` | `mb.command.migrate` | Migrate all YAML match files into MySQL. |
+| `/mb migrate mysql2yaml` | `mb.command.migrate` | Migrate all MySQL records to YAML files. |
+| `/mb migrate ... --dry-run` | `mb.command.migrate` | Preview migration without writing anything. |
+| `/mb reload` | `mb.command.reload` | Reload `config.yml` without restarting. |
+| `/mb statskeys [player]` | `mb.command.statskeys` | List all stat keys available from MBedwars for a player. |
+| `/mb test [--upload]` | `mb.command.test` | Run a storage health check; optionally test Hastebin upload. |
 
 ---
 
-## Example config
-```yml
+## Permissions
+
+### Permission Groups
+
+| Node | Default | Grants |
+|---|---|---|
+| `mb.command.use` | Everyone | Required to use any `/mb` command at all. |
+| `mb.command.default` | Everyone | `matches`, `all`, `view`, `export`, `help` |
+| `mb.command.admin` | OP | `migrate`, `reload`, `statskeys`, `test` |
+
+### Individual Nodes
+
+| Node | Default |
+|---|---|
+| `mb.command.matches` | false |
+| `mb.command.all` | false |
+| `mb.command.view` | false |
+| `mb.command.export` | false |
+| `mb.command.help` | false |
+| `mb.command.migrate` | false |
+| `mb.command.reload` | false |
+| `mb.command.statskeys` | false |
+| `mb.command.test` | false |
+
+> **Tip:** Grant `mb.command.default` to your player rank and `mb.command.admin` to staff. The `mb.command.use` node is true by default so everyone can run `/mb` without a permission error.
+
+### Legacy nodes
+
+These are kept for backwards compatibility with older permission setups:
+
+- `matchbook.admin` — equivalent to `mb.command.admin`
+- `matchbook.matches` — equivalent to `mb.command.matches`
+- `matchbook.migrate` — equivalent to `mb.command.migrate`
+
+---
+
+## In-Game GUI
+
+### Match History (`/mb matches`)
+
+- Shows all of your past matches, most recent first.
+- Each item shows the actual result: the winning team's color and name (e.g. **RED WIN**), or every tied team's color for a tie (e.g. **RED, BLUE TIE**). Your own team for that match is shown in the item tooltip.
+- Displays your stats for that match in the item tooltip.
+- Click any match to open Match Details.
+
+### Match Details
+
+- Players are grouped by team (fixed color order), then sorted by final kills → kills within each team.
+- Each player is shown as a wool block colored by their team's actual bed color.
+- Row 1 holds the match summary; the player list starts on row 2.
+- **Spectators** are listed in the spyglass item (slot 47 in the nav bar).
+- **Event Log button** (slot 51) — click to open the full event timeline.
+- Prev/Next navigate between pages when there are many players.
+
+### Event Log
+
+- Paginated timeline of every event that occurred during the match.
+- Each event is its own inventory item with an icon, description, and time offset.
+- Time is shown as `+M:SS` from match start. Events before the round began show as `lobby`.
+- Navigate with Prev/Next; click Back to return to Match Details.
+
+**Event types displayed:**
+
+| Icon | Event |
+|---|---|
+| Lime glass pane | Match started (shows real wall-clock time) |
+| Red glass pane | Match ended (shows duration) |
+| Lime dye | Player joined |
+| Red dye | Player left (still an active player) |
+| Gray dye | Player left while spectating (already eliminated) |
+| Skeleton skull | Regular death (shows cause when available, e.g. Fall, Void, Entity Attack) |
+| Wither skeleton skull | Final death / eliminated (shows cause when available) |
+| Iron sword | Regular kill (shows cause when available) |
+| Golden sword | Final kill (shows cause when available) |
+| TNT | Bed destroyed |
+| Barrier | Team eliminated |
+| Spyglass | Spectator joined |
+| Ender eye | Spectator left |
+
+---
+
+## CSV Export
+
+Running `/mb export <matchcode>` creates two files in `plugins/MBedwars/add-ons/Matchbook/exports/`:
+
+### `<matchcode>.csv` — Player Stats
+
+One row per participant with their stat diffs for that match.
+
+```csv
+uuid,username,team,kills,final_kills,deaths,final_deaths,beds_destroyed,wins,loses
+...
+```
+
+### `<matchcode>_events.csv` — Event Log
+
+One row per event in chronological order.
+
+```csv
+offset_seconds,wall_clock_unix,type,player_name,player_uuid,player_team,killer_name,killer_uuid,killer_team,bed_team,final,cause,was_spectating
+0,1751234567,MATCH_START,,,,,,,,false,,false
+13,1751234580,PLAYER_JOIN,Steve,<uuid>,RED,,,,,false,,false
+58,1751234625,PLAYER_KILL,Alex,<uuid>,BLUE,Steve,<uuid>,RED,,true,ENTITY_ATTACK,false
+...
+```
+
+`cause` is the Bukkit damage cause (e.g. `FALL`, `VOID`, `ENTITY_ATTACK`, `PROJECTILE`) and is only populated for `PLAYER_DEATH`/`PLAYER_KILL` rows when MBedwars/Bukkit exposed one. `was_spectating` is `true` on a `PLAYER_LEAVE` row when the player had already been eliminated and was spectating at the moment they left.
+
+For multi-match exports, the events CSV includes an extra `match` column at the start and is sorted chronologically across all matches.
+
+---
+
+## Configuration
+
+Config lives at `plugins/MBedwars/add-ons/Matchbook/config.yml`.
+
+On plugin update, Matchbook automatically backs up your config (`config.yml.bak-<old-version>-<date>`) and merges new settings in. You never need to re-configure from scratch.
+
+### Hub / Lobby Mode
+
+```yaml
+mode:
+  hub: false   # set true on a server that should never record matches
+```
+
+When `mode.hub` is `true`, Matchbook registers no match-tracking listeners at all — it never creates a match session or writes a match to storage on that server. It still connects to the configured storage backend, so `/mb matches`, `/mb all`, `/mb view`, and `/mb export` keep working for browsing/exporting matches recorded elsewhere. This is meant for a hub/lobby server pointed at the same shared MySQL database as your backend arena servers (`storage.type: mysql`). Takes effect on server start/restart, not `/mb reload`.
+
+### Storage
+
+```yaml
 storage:
-  type: yaml  # yaml or mysql
-
+  type: yaml          # yaml or mysql
   mysql:
-    host: "localhost"
+    host: "127.0.0.1"
     port: 3306
     database: "matchbook"
-    username: "root"
-    password: "password"
-    params: "useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC"
+    username: "matchbook"
+    password: "change_me"
     table_prefix: "matchbook_"
+```
 
+### Tracked Stats
+
+```yaml
 match:
-  announce_match_code: false
+  tracked_keys:
+    - "bedwars:kills"
+    - "bedwars:final_kills"
+    # ... add more using keys from /mb statskeys
+```
 
-# Matches only save when these stats occur:
-tracked_activity:
-  count_kills: true
-  count_deaths: true
-  count_bed_breaks: true
+### Export Columns
 
-logging:
-  debug: false
+```yaml
+export:
+  columns:
+    - uuid
+    - username
+    - team
+    - bedwars:kills
+    - bedwars:final_kills
+    # Leave empty to use all tracked_keys as defaults
+```
+
+### Hastebin Upload
+
+```yaml
+export_upload:
+  enabled: true
+  server: "https://hastebin.com"   # or any compatible instance, e.g. https://hst.sh
+```
+
+---
+
+## MySQL Setup
+
+1. Create a database and user:
+   ```sql
+   CREATE DATABASE matchbook CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   CREATE USER 'matchbook'@'localhost' IDENTIFIED BY 'your_password';
+   GRANT ALL PRIVILEGES ON matchbook.* TO 'matchbook'@'localhost';
+   ```
+2. Set `storage.type: mysql` in `config.yml` with your credentials.
+3. Restart the server — tables are created automatically.
+
+> **TLS:** connections verify the server certificate by default. If your MySQL/MariaDB server uses a self-signed certificate, add `verifyServerCertificate=false` to `mysql.params` in `config.yml`.
+
+### Migration
+
+Migrate existing YAML data to MySQL (or back) without losing anything:
+
+```
+# Preview what would be migrated
+/mb migrate yaml2mysql --dry-run
+
+# Perform the migration
+/mb migrate yaml2mysql
+
+# Reverse: move MySQL data back to YAML
+/mb migrate mysql2yaml
 ```
 
 ---
 
 ## PlaceholderAPI
-If PlaceholderAPI is installed:
-- `%matchbook_match_code%` — your current match code (if in a tracked match)
+
+If PlaceholderAPI is installed, Matchbook registers the `%matchbook_matchcode%` placeholder. It returns the current active match code for the player's arena (or their last match code for a short grace period after the match ends, so scoreboards don't go blank during transitions).
 
 ---
 
-## Notes for competitive use
-- Match codes are short and easy to submit (`XXXX-XXXX`).
-- Matchbook avoids cross-match stat contamination (players leaving and joining new matches won’t affect prior match records).
-- Designed for review workflows: history GUI + match details + CSV export.
+## Multi-Server / Proxy Networks
+
+MBedwars has its own network-wide arena awareness (so hub servers behind a proxy can show live info for arenas hosted on other backend servers). Matchbook only ever creates a match record for an arena that has an actual game world loaded on that specific server — so installing Matchbook on a hub server with no arenas of its own is safe: it will never start tracking (and getting stuck on) matches that are really being played elsewhere on the network. If it ever rejects an arena for this reason, it logs one warning per arena name so you can confirm what happened.
+
+For a hub server, prefer setting `mode.hub: true` explicitly (see [Hub / Lobby Mode](#hub--lobby-mode)) rather than relying solely on the automatic arena-locality check above — it skips match tracking entirely instead of rejecting arenas one at a time, and makes the server's role unambiguous.
+
+If you run YAML storage per-server, each server's match history stays local to it. Point every server at the same MySQL database (`storage.type: mysql`) if you want one shared, network-wide match history instead — this is required for a hub server in `mode.hub: true` to have anything to read/export.
 
 ---
 
-## Support / Troubleshooting
-If you run into issues, grab:
-- your server `latest.log`
-- Matchbook config
-- MBedwars version number
+## Storage Layout (YAML mode)
 
-and include a quick repro (what you clicked/typed, what arena, what happened).
+```
+plugins/MBedwars/add-ons/Matchbook/
+├── config.yml
+├── matches/
+│   ├── 2026-06-30/
+│   │   ├── AB12.yml
+│   │   └── CD34.yml
+│   └── ...
+├── users/
+│   └── <player-uuid>.yml    ← per-player match index
+└── exports/
+    ├── AB12.csv
+    └── AB12_events.csv
+```
+
+Each match file is a self-contained YAML document with the match summary, per-player stats, and the full event log.
+
+---
+
+## Building from Source
+
+```bash
+./gradlew shadowJar
+```
+
+Output: `build/libs/Matchbook-<version>.jar`
+
+Requires Java 21+.
