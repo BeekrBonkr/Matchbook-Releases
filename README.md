@@ -12,7 +12,6 @@ A Paper plugin that records persistent match history for [MBedwars](https://www.
 - **Tie detection** — matches that end without a winner are correctly flagged as ties, with the specific tied teams tracked and shown by color.
 - **In-game GUI** — paginated match list, detailed per-player stats, event timeline viewer.
 - **CSV export** — player stats and event log exported as separate CSV files.
-- **Hastebin upload** — optionally upload exported CSVs to any Hastebin-compatible server automatically. Files are always saved locally too.
 - **PlaceholderAPI** — exposes `%matchbook_matchcode%` for scoreboards/holograms.
 - **Dual storage** — flat YAML files (default) or MySQL/MariaDB with one-command migration.
 - **Auto config updates** — on plugin upgrade, new config keys are added automatically while preserving your existing settings.
@@ -55,9 +54,9 @@ All commands use `/matchbook` or the alias `/mb`.
 | `/mb migrate yaml2mysql` | `mb.command.migrate` | Migrate all YAML match files into MySQL. |
 | `/mb migrate mysql2yaml` | `mb.command.migrate` | Migrate all MySQL records to YAML files. |
 | `/mb migrate ... --dry-run` | `mb.command.migrate` | Preview migration without writing anything. |
-| `/mb reload` | `mb.command.reload` | Reload `config.yml` without restarting. |
+| `/mb reload` | `mb.command.reload` | Reload `config.yml` without restarting — hot-swaps the storage backend too if `storage.*` changed. |
 | `/mb statskeys [player]` | `mb.command.statskeys` | List all stat keys available from MBedwars for a player. |
-| `/mb test [--upload]` | `mb.command.test` | Run a storage health check; optionally test Hastebin upload. |
+| `/mb test` | `mb.command.test` | Run a storage health check. |
 
 ---
 
@@ -202,6 +201,10 @@ storage:
     table_prefix: "matchbook_"
 ```
 
+Changing anything under `storage:` (including switching `type` between `yaml` and `mysql`) takes effect on `/mb reload` — no server restart needed. Matchbook builds and validates the new backend (connects, runs a health check) *before* switching over, so a typo'd password or unreachable host just fails the reload and logs why, leaving the previous backend running untouched. (`mode.hub` is the one exception — it still needs a restart, see [Hub / Lobby Mode](#hub--lobby-mode).)
+
+If a match ever can't be saved after a few retries (e.g. the database is briefly unreachable), Matchbook writes a local recovery copy to `matches/failed/<matchcode>.yml` instead of losing it — nothing to do at the time, just move/re-import that file once storage is healthy again.
+
 ### Tracked Stats
 
 ```yaml
@@ -223,14 +226,6 @@ export:
     - bedwars:kills
     - bedwars:final_kills
     # Leave empty to use all tracked_keys as defaults
-```
-
-### Hastebin Upload
-
-```yaml
-export_upload:
-  enabled: true
-  server: "https://hastebin.com"   # or any compatible instance, e.g. https://hst.sh
 ```
 
 ---
