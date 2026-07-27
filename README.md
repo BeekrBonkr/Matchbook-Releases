@@ -8,13 +8,14 @@ A Paper plugin that records persistent match history for [MBedwars](https://www.
 
 - **Match history** — every completed BedWars match is saved with per-player stats (kills, deaths, final kills, beds destroyed, wins, losses).
 - **Event log** — every join, leave, death, kill, bed break, and team elimination is recorded with timestamps, including the death/kill cause (fall, void, entity attack, etc.) and whether a leaving player was already eliminated and spectating. Viewable in the GUI and exportable to CSV.
-- **Placement tracking** — 1st, 2nd, 3rd place tracked per team and included in exports. Teams tied for 1st get a dedicated tie stat instead of a false 1st-place credit.
+- **Placement tracking** — 1st, 2nd, 3rd place tracked per team and included in exports. Final standings are always a contiguous 1..N ranking, so a match can never record a 1st, 3rd and 4th with no 2nd. Teams tied for 1st get a dedicated tie stat instead of a false 1st-place credit.
 - **Tie detection** — matches that end without a winner are correctly flagged as ties, with the specific tied teams tracked and shown by color.
 - **In-game GUI** — paginated match list, detailed per-player stats, event timeline viewer.
 - **CSV export** — player stats and event log exported as separate CSV files.
 - **PlaceholderAPI** — exposes `%matchbook_matchcode%` for scoreboards/holograms.
 - **Dual storage** — flat YAML files (default) or MySQL/MariaDB with one-command migration.
 - **Auto config updates** — on plugin upgrade, new config keys are added automatically while preserving your existing settings.
+- **Built for reliability** — saves retry and fall back to a local recovery file if storage is down; duplicate round-end events, back-to-back arena restarts, quick leave/rejoins, and mid-match team changes are all handled without corrupting records. A match's roster is taken from MBedwars' own round-end winner/loser lists (not live arena occupancy), and per-player stats are diffed against a baseline captured when they joined — so a player who's already queued into the arena's next round can't leak into the previous one with stats they didn't earn. The match lifecycle is covered by a simulation harness that replays these edge cases against the real code.
 - **Proxy/network safe** — on a hub server with no arenas of its own, Matchbook won't create match records for arenas MBedwars merely knows about over the network (via its remote-arena awareness); it only tracks arenas actually running on that server.
 - **Hub/lobby mode** — an explicit `mode.hub` config flag to fully disable match recording on a server, while still reading and exporting matches from the shared storage backend.
 
@@ -150,6 +151,8 @@ Running `/mb export <matchcode>` creates two files in `plugins/MBedwars/add-ons/
 One row per participant with their stat diffs for that match.
 
 ```csv
+# match_codes: 8F3KQ-2JDXW
+# matchbook_version: 0.7.3
 uuid,username,team,kills,final_kills,deaths,final_deaths,beds_destroyed,wins,loses
 ...
 ```
@@ -159,14 +162,20 @@ uuid,username,team,kills,final_kills,deaths,final_deaths,beds_destroyed,wins,los
 One row per event in chronological order.
 
 ```csv
-offset_seconds,wall_clock_unix,type,player_name,player_uuid,player_team,killer_name,killer_uuid,killer_team,bed_team,final,cause,was_spectating
-0,1751234567,MATCH_START,,,,,,,,false,,false
-13,1751234580,PLAYER_JOIN,Steve,<uuid>,RED,,,,,false,,false
-58,1751234625,PLAYER_KILL,Alex,<uuid>,BLUE,Steve,<uuid>,RED,,true,ENTITY_ATTACK,false
+# match: 8F3KQ-2JDXW
+# matchbook_version: 0.7.3
+offset_seconds,wall_clock_unix,type,player_name,player_uuid,player_team,killer_name,killer_uuid,killer_team,bed_team,final,cause,was_spectating,kill_cause
+0,1751234567,MATCH_START,,,,,,,,false,,false,
+13,1751234580,PLAYER_JOIN,Steve,<uuid>,RED,,,,,false,,false,
+58,1751234625,PLAYER_DEATH,Alex,<uuid>,BLUE,Steve,<uuid>,RED,,true,VOID,false,ENTITY_ATTACK
 ...
 ```
 
-`cause` is the Bukkit damage cause (e.g. `FALL`, `VOID`, `ENTITY_ATTACK`, `PROJECTILE`) and is only populated for `PLAYER_DEATH`/`PLAYER_KILL` rows when MBedwars/Bukkit exposed one. `was_spectating` is `true` on a `PLAYER_LEAVE` row when the player had already been eliminated and was spectating at the moment they left.
+`matchbook_version` is the Matchbook version that **recorded** the match (captured when the match session was created and stored with the match), not the version doing the export. Matches recorded before 0.6.10 show `unknown`. Multi-match exports print `# matchbook_versions:` instead — a single value when all matches were recorded by the same build, otherwise `code=version` pairs.
+
+A `PLAYER_DEATH` row is the complete record of one death: the victim (`player_*`), how they died (`cause` — the Bukkit damage cause, e.g. `FALL`, `VOID`, `ENTITY_ATTACK`, `PROJECTILE`), and the responsible player MBedwars credited (`killer_*`). `kill_cause` shows how that player contributed — the example row above reads "Alex fell into the void after being hit by Steve, and it was a final kill". Empty killer columns on a void/fall death mean nobody was credited: a genuine environmental death. `was_spectating` is `true` on a `PLAYER_LEAVE` row when the player had already been eliminated and was spectating at the moment they left.
+
+Matches recorded before 0.7.0 log attribution as a separate `PLAYER_KILL` row (killer in `killer_*`, victim name in `player_name`, kill cause in `cause`) near the victim's `PLAYER_DEATH` row. Those matches export and display exactly as before, and `PLAYER_KILL` can still appear (rarely) in new recordings when a kill couldn't be matched to its death row.
 
 For multi-match exports, the events CSV includes an extra `match` column at the start and is sorted chronologically across all matches.
 
@@ -204,6 +213,8 @@ storage:
 Changing anything under `storage:` (including switching `type` between `yaml` and `mysql`) takes effect on `/mb reload` — no server restart needed. Matchbook builds and validates the new backend (connects, runs a health check) *before* switching over, so a typo'd password or unreachable host just fails the reload and logs why, leaving the previous backend running untouched. (`mode.hub` is the one exception — it still needs a restart, see [Hub / Lobby Mode](#hub--lobby-mode).)
 
 If a match ever can't be saved after a few retries (e.g. the database is briefly unreachable), Matchbook writes a local recovery copy to `matches/failed/<matchcode>.yml` instead of losing it — nothing to do at the time, just move/re-import that file once storage is healthy again.
+
+`matches/failed/` is quarantine, not storage: recovery copies are deliberately **not** listed by `/mb all` or openable with `/mb view`, so a record the backend rejected can never be mistaken for one that saved cleanly. To bring one back, move it into a day folder under `matches/` (YAML mode) or import it (MySQL mode).
 
 ### Tracked Stats
 
@@ -282,15 +293,16 @@ If you run YAML storage per-server, each server's match history stays local to i
 plugins/MBedwars/add-ons/Matchbook/
 ├── config.yml
 ├── matches/
-│   ├── 2026-06-30/
-│   │   ├── AB12.yml
-│   │   └── CD34.yml
+│   ├── 06-30-2026/                      ← one folder per day (MM-dd-yyyy)
+│   │   ├── 1751297443-a1b2c3…-8F3KQ-2JDXW.yml  ← <startUnix>-<arenaHash>-<matchcode>.yml
+│   │   └── 1751299018-a1b2c3…-M7G9V-QDQ9T.yml
+│   ├── failed/                          ← quarantined recovery copies (not listed by /mb)
 │   └── ...
 ├── users/
 │   └── <player-uuid>.yml    ← per-player match index
 └── exports/
-    ├── AB12.csv
-    └── AB12_events.csv
+    ├── 8F3KQ-2JDXW.csv
+    └── 8F3KQ-2JDXW_events.csv
 ```
 
 Each match file is a self-contained YAML document with the match summary, per-player stats, and the full event log.
